@@ -18,7 +18,7 @@ use DBI;
 #
 my $progname = 'livepoll';
 my $path_tmp = './';
-my $fn_db    = "$progname.db";
+my $fn_db    = ".$progname.db";
 my $clients  = {};
 my $counter  = 0;
 my $dbh = DBI->connect("dbi:SQLite:dbname=$path_tmp/$fn_db","","");
