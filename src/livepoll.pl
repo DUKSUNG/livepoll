@@ -10,18 +10,71 @@ use strict;
 use warnings;
 use utf8;
 use Mojolicious::Lite;
-use DBI;
-
+use DBI qw(:sql_types); # http://www.sqlite.org/datatype3.html
 
 #
-# Initialize
+# Default Setting 
 #
 my $progname = 'livepoll';
 my $path_tmp = './';
 my $fn_db    = ".$progname.db";
 my $clients  = {};
 my $counter  = 0;
-my $dbh = DBI->connect("dbi:SQLite:dbname=$path_tmp/$fn_db","","");
+
+#
+# Initialize DB
+#
+my $dbh = DBI->connect("dbi:SQLite:dbname=$path_tmp/$fn_db", undef, undef, { AutoCommit => 1, RaiseError => 1, sqlite_see_if_its_a_number => 1,}) or die "Can't connect $path_tmp/$fn_db: $!\n";
+
+# SETTING PRAGMA
+$dbh->do("PRAGMA foreign_keys = ON" ) or die DBI::errstr; # For Foreign keys.
+$dbh->do("PRAGMA synchronous = OFF" ) or die DBI::errstr; # For Performance.
+$dbh->do("PRAGMA cache_size = 80000") or die DBI::errstr; # 80MB for DB cache.
+
+# SETTING DB Handle Attributes
+$dbh->{sqlite_unicode} = 1; 
+
+# INIT Table
+$dbh->do(q{
+	CREATE TABLE IF NOT EXISTS livepoll_info (
+		livepoll_info_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		regdate DATE DEFAULT (datetime('now','localtime')),
+		description TEXT
+	)
+}) or die DBI::errstr;
+
+$dbh->do(q{
+	CREATE TABLE IF NOT EXISTS livepoll_item (
+		livepoll_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		info_id INTEGER NOT NULL,
+		regdate DATE DEFAULT (datetime('now','localtime')),
+		subject TEXT NOT NULL,
+		FOREIGN KEY(info_id) REFERENCES livepoll_info(livepoll_info_id)
+	)
+}) or die DBI::errstr;
+
+$dbh->do(q{
+	CREATE TABLE IF NOT EXISTS livepoll_response (
+		livepoll_resp_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		item_id INTEGER NOT NULL,
+		regdate DATE DEFAULT (datetime('now','localtime')),
+		subject TEXT NOT NULL,
+		sequence INTEGER NOT NULL,
+		count INTEGER DEFAULT 0,
+		FOREIGN KEY(item_id) REFERENCES livepoll_info(livepoll_item_id)
+	)
+}) or die DBI::errstr;
+
+$dbh->do(q{
+	CREATE TABLE IF NOT EXISTS livepoll_comment (
+		livepoll_comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		item_id INTEGER NOT NULL,
+		regdate DATE DEFAULT (datetime('now','localtime')),
+		comment TEXT NOT NULL,
+		FOREIGN KEY(item_id) REFERENCES livepoll_info(livepoll_item_id)
+	)
+}) or die DBI::errstr;
+
 #
 # 기본 페이지
 #
