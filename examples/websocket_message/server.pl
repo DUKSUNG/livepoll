@@ -52,7 +52,7 @@ $(function () {
         $('#log').val( $('#log').val() + text + "\n");
       };
   
-      var ws = new WebSocket('ws://203.252.219.164:3000/echo');
+      var ws = new WebSocket('ws://192.168.0.254:3000/echo');
       ws.onopen = function () {
         log('Connection opened');
       };
