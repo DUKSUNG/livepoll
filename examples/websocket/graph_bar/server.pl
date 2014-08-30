@@ -3,12 +3,24 @@ use utf8;
 use Mojolicious::Lite;
 use Data::Dumper;
 
+my $clients = {};
+my %SIZE = (
+	"graph_1" => 1,
+	"graph_2" => 1,
+	"graph_3" => 1,
+	"graph_4" => 1,
+);
+
 get '/' => sub {
 	my $c = shift;
-	$c->render('index');
+	$c->render('index', 
+		size1 => $SIZE{graph_1},
+		size2 => $SIZE{graph_2},
+		size3 => $SIZE{graph_3},
+		size4 => $SIZE{graph_4},
+	);
 };
 
-my $clients = {};
 
 websocket '/tiktok' => sub {
 	my $self = shift;
@@ -29,6 +41,11 @@ websocket '/tiktok' => sub {
 			if ( $msg =~ /^([+-])(.+)/ ) {
 				$mode = $1."1";
 				$name = $2;
+
+				if ( $SIZE{$name} > 0 ) {
+					$SIZE{$name} += ($mode * 10);
+				}
+
 				app->log->debug("mode: $mode, name: $name");
 				for (keys %$clients) {
 					$clients->{$_}->send({json => { mode => $mode, name => $name }});
@@ -93,10 +110,6 @@ $(function () {
 });
 </script>
 <style type="text/css">
-#graph_1 { background-color: red; padding-right: 1 }
-#graph_2 { background-color: red; padding-right: 1 }
-#graph_3 { background-color: red; padding-right: 1 }
-#graph_4 { background-color: red; padding-right: 1 }
 </style>
 </head>
 
@@ -108,19 +121,19 @@ $(function () {
 
 <input type="submit" id="no1_add" value="+">
 <input type="submit" id="no1_minus" value="-">
-1. <span id=graph_1>&nbsp;</span></br>
+1. <span id=graph_1 style='background-color: red; padding-right: <%= $size1 %>'>&nbsp;</span></br>
 
 <input type="submit" id="no2_add" value="+">
 <input type="submit" id="no2_minus" value="-">
-2. <span id=graph_2>&nbsp;</span></br>
+2. <span id=graph_2 style='background-color: red; padding-right: <%= $size2 %>'>&nbsp;</span></br>
 
 <input type="submit" id="no3_add" value="+">
 <input type="submit" id="no3_minus" value="-">
-3. <span id=graph_3>&nbsp;</span></br>
+3. <span id=graph_3 style='background-color: red; padding-right: <%= $size3 %>'>&nbsp;</span></br>
 
 <input type="submit" id="no4_add" value="+">
 <input type="submit" id="no4_minus" value="-">
-4. <span id=graph_4>&nbsp;</span></br>
+4. <span id=graph_4 style='background-color: red; padding-right: <%= $size4 %>'>&nbsp;</span></br>
 
 </body>
 </html>
