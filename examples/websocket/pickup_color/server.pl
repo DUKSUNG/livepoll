@@ -12,7 +12,7 @@ my $clients = {};
 websocket '/pickup' => sub {
 	my $self = shift;
 
-	$self->inactivity_timeout(300000000);
+	$self->inactivity_timeout(0);
 
 	app->log->debug(sprintf 'Client connected: %s', $self->tx);
 
