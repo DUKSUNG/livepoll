@@ -241,7 +241,7 @@ get '/livepoll/admin/poll/view' => sub {
 			my $sth2 = $dbh->prepare("SELECT livepoll_item_select_id, sequence, subject, count FROM livepoll_item_select WHERE item_id=$item_id ORDER BY sequence");
 			$sth2->execute();
 			while ( my ($select_id, $seq, $subject, $count) = $sth2->fetchrow_array ) {
-				$content .= "$seq : <small><a href='/livepoll/admin/item/move?type=livepoll_item_select&mode=up&select_id=$select_id&item_id=$item_id&info_id=$info_id'>UP</a>, <a href='/livepoll/admin/item/move?type=livepoll_item_select&mode=down&item_id=$item_id&select_id=$select_id&info_id=$info_id'>DOWN</a>, <a href='/livepoll/admin/item/edit/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>수정</a>, <a href='/livepoll/admin/item/rm/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>삭제</a>, <a href='/livepoll/admin/item/reset/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>값초기화</a></small> $subject, $count<br>";
+				$content .= "$seq : <small><a href='/livepoll/admin/item/move?type=livepoll_item_select&mode=up&select_id=$select_id&item_id=$item_id&info_id=$info_id'>UP</a>, <a href='/livepoll/admin/item/move?type=livepoll_item_select&mode=down&item_id=$item_id&select_id=$select_id&info_id=$info_id'>DOWN</a>, <a href='/livepoll/admin/item/edit/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>수정</a>, <a href='/livepoll/admin/item/rm/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>삭제</a>, <a href='/livepoll/admin/item/reset/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>값초기화</a>, <a href='/livepoll/admin/item/choice/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>+1</a>, <a href='/livepoll/admin/item/cancel/select?item_id=$item_id&info_id=$info_id&select_id=$select_id'>-1</a></small> $subject, $count<br>";
 			}
 
 			#
@@ -250,7 +250,7 @@ get '/livepoll/admin/poll/view' => sub {
 			$sth2 = $dbh->prepare("SELECT livepoll_item_check_id, sequence, subject, count FROM livepoll_item_check WHERE item_id=$item_id ORDER BY sequence");
 			$sth2->execute();
 			while ( my ($check_id, $seq, $subject, $count) = $sth2->fetchrow_array ) {
-				$content .= "$seq : <small><a href='/livepoll/admin/item/move?type=livepoll_item_check&mode=up&check_id=$check_id&item_id=$item_id&info_id=$info_id'>UP</a>, <a href='/livepoll/admin/item/move?type=livepoll_item_check&mode=down&item_id=$item_id&check_id=$check_id&info_id=$info_id'>DOWN</a>, <a href='/livepoll/admin/item/edit/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>수정</a>, <a href='/livepoll/admin/item/rm/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>삭제</a>, <a href='/livepoll/admin/item/reset/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>값초기화</a></small> $subject, $count<br>";
+				$content .= "$seq : <small><a href='/livepoll/admin/item/move?type=livepoll_item_check&mode=up&check_id=$check_id&item_id=$item_id&info_id=$info_id'>UP</a>, <a href='/livepoll/admin/item/move?type=livepoll_item_check&mode=down&item_id=$item_id&check_id=$check_id&info_id=$info_id'>DOWN</a>, <a href='/livepoll/admin/item/edit/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>수정</a>, <a href='/livepoll/admin/item/rm/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>삭제</a>, <a href='/livepoll/admin/item/reset/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>값초기화</a>, <a href='/livepoll/admin/item/choice/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>+1</a>, <a href='/livepoll/admin/item/cancel/check?item_id=$item_id&info_id=$info_id&check_id=$check_id'>-1</a></small> $subject, $count<br>";
 			}
 
 			#
@@ -527,6 +527,66 @@ get '/livepoll/admin/item/reset/select' => sub {
 	} elsif ( $info_id && $select_id ) {
 		my $title = "$progname - 설문항목 카운트 초기화";
 		$c->render('admin.item.reset.select', header => header(), footer => footer(), title => $title, info_id => $info_id, select_id => $select_id);
+	} else {
+		$c->render(text => '<html> <meta http-equiv="refresh" content="0; url=/livepoll/admin/poll/list"></meta> </html>');
+	}
+	closer();
+};
+
+get '/livepoll/admin/item/choice/select' => sub {
+	my $c = shift;
+	my $info_id = $c->param('info_id') || 0;
+	my $select_id = $c->param('select_id') || 0;
+
+	if ( $info_id && $select_id ) {
+		$dbh->do("UPDATE livepoll_item_select SET count = count + 1 WHERE livepoll_item_select_id=$select_id") or die DBI::errstr;
+
+		$c->render(text => "<html> <meta http-equiv='refresh' content='0; url=/livepoll/admin/poll/view?info_id=$info_id'></meta> </html>");
+	} else {
+		$c->render(text => '<html> <meta http-equiv="refresh" content="0; url=/livepoll/admin/poll/list"></meta> </html>');
+	}
+	closer();
+};
+
+get '/livepoll/admin/item/cancel/select' => sub {
+	my $c = shift;
+	my $info_id = $c->param('info_id') || 0;
+	my $select_id = $c->param('select_id') || 0;
+
+	if ( $info_id && $select_id ) {
+		$dbh->do("UPDATE livepoll_item_select SET count = count - 1 WHERE livepoll_item_select_id=$select_id") or die DBI::errstr;
+
+		$c->render(text => "<html> <meta http-equiv='refresh' content='0; url=/livepoll/admin/poll/view?info_id=$info_id'></meta> </html>");
+	} else {
+		$c->render(text => '<html> <meta http-equiv="refresh" content="0; url=/livepoll/admin/poll/list"></meta> </html>');
+	}
+	closer();
+};
+
+get '/livepoll/admin/item/choice/check' => sub {
+	my $c = shift;
+	my $info_id = $c->param('info_id') || 0;
+	my $check_id = $c->param('check_id') || 0;
+
+	if ( $info_id && $check_id ) {
+		$dbh->do("UPDATE livepoll_item_check SET count = count + 1 WHERE livepoll_item_check_id=$check_id") or die DBI::errstr;
+
+		$c->render(text => "<html> <meta http-equiv='refresh' content='0; url=/livepoll/admin/poll/view?info_id=$info_id'></meta> </html>");
+	} else {
+		$c->render(text => '<html> <meta http-equiv="refresh" content="0; url=/livepoll/admin/poll/list"></meta> </html>');
+	}
+	closer();
+};
+
+get '/livepoll/admin/item/cancel/check' => sub {
+	my $c = shift;
+	my $info_id = $c->param('info_id') || 0;
+	my $check_id = $c->param('check_id') || 0;
+
+	if ( $info_id && $check_id ) {
+		$dbh->do("UPDATE livepoll_item_check SET count = count - 1 WHERE livepoll_item_check_id=$check_id") or die DBI::errstr;
+
+		$c->render(text => "<html> <meta http-equiv='refresh' content='0; url=/livepoll/admin/poll/view?info_id=$info_id'></meta> </html>");
 	} else {
 		$c->render(text => '<html> <meta http-equiv="refresh" content="0; url=/livepoll/admin/poll/list"></meta> </html>');
 	}
