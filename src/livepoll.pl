@@ -19,6 +19,7 @@ my $progname = 'livepoll';
 my $path_tmp = './';
 my $fn_db    = ".$progname.db";
 my $clients  = {};
+my $synctest  = {};
 my $counter  = 0;
 
 #
@@ -668,6 +669,51 @@ get '/livepoll/admin/item/add/comment' => sub {
 };
 
 #
+# 동기화 테스트
+#
+get '/livepoll/synctest' => sub {
+	my $c = shift;
+	my $title = "$progname - 동기화 테스트";
+	$c->render('synctest', header => header(), footer => footer(), title => $title);
+	closer();
+};
+
+websocket '/livepoll/websocket/synctest' => sub {
+	my $self = shift;
+
+	# 타임아웃 설정하지 않음.
+	$self->inactivity_timeout(0);
+
+	# $self->tx == HASHREF;
+	my $id = sprintf("%s", $self->tx);
+	$clients->{$id} = $self->tx;
+
+	app->log->debug('SYNCTEST: CONNECTED: ' . keys %{ $clients });
+	$synctest->{total} = keys %{ $clients };
+	$clients->{$id}->send( { json => $synctest });
+
+	$self->on(message => sub {
+			my ( $self, $msg ) = @_;
+			$synctest->{msg}->{$id} = $msg;
+			$synctest->{total} = keys %{ $clients };
+			foreach my $key ( %{ $clients } ) {
+				$clients->{$key}->send( { json => $synctest });
+			}
+		});
+
+	$self->on(finish => sub {
+			delete $clients->{$id};
+			delete $synctest->{msg}->{$id};
+			$synctest->{total} = keys %{ $clients };
+			app->log->debug('SYNCTEST: DISCONNECTED: ' . keys %{ $clients });
+			foreach my $key ( %{ $clients } ) {
+				$clients->{$key}->send( { json => $synctest });
+			}
+
+		});
+
+};
+#
 # 설문자 영역
 #
 get '/livepoll/respondent' => sub {
@@ -680,7 +726,6 @@ get '/livepoll/respondent' => sub {
 #
 # 집계화면 영역
 #
-
 get '/livepoll/screen' => sub {
 	my $c = shift;
 	my $title = "$progname - 집계 화면";
@@ -844,12 +889,56 @@ __DATA__
 정말 초기화 하시겠습니까? <a href=/livepoll/admin/item/reset/select?info_id=<%= $info_id %>&check=1&select_id=<%= $select_id %>>YES</a>, <a href=/livepoll/admin/poll/view?info_id=<%= $info_id %>>NO</a>
 <%== $footer %>
 
-
 @@ admin.item.rm.html.ep
 <%== $header %>
 <h1><%= $title %></h1>
 정말 삭제하시겠습니까? <a href=/livepoll/admin/item/rm?info_id=<%= $info_id %>&check=1&item_id=<%= $item_id %>>YES</a>, <a href=/livepoll/admin/poll/view?info_id=<%= $info_id %>>NO</a>
 <%== $footer %>
+
+@@ synctest.html.ep
+<%== $header %>
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+<h1><%= $title %></h1>
+
+<script type="text/javascript">
+$(function () {
+	var ws = new WebSocket('ws://203.252.219.164:3000/livepoll/websocket/synctest');
+
+	ws.onopen = function () {
+		document.getElementById("status").innerHTML = "Connection Opened!";
+		ws.send($('#msg').val());
+	};
+
+	ws.onmessage = function (msg) {
+		var res = JSON.parse(msg.data);
+
+		document.getElementById("result").innerHTML = "";
+		document.getElementById("status").innerHTML = "Connection Opened! Clients: " + res["total"];
+
+		var i = 0;
+		for ( var id in res["msg"] ) {
+			$('#result').append('<div>' + i + ': ' + res["msg"][id] + '</div>');
+			i++;
+		}
+	};
+
+	$('#msg').keydown(function (e) {
+		if ( $('#msg').val() ) {
+			ws.send($('#msg').val());
+			if (e.keyCode == 13) {
+				$('#msg').val('');
+			}
+		}
+	});
+});
+</script>
+
+<div id=status>Can't connect websocket!</div></p>
+<input type="text" id="msg" /> <small>글을 쓰고 엔터를 누르세요</small></p>
+<div id=result></div>
+
+<%== $footer %>
+
 
 @@ respondent.html.ep
 <%= $title %>
