@@ -104,7 +104,7 @@ $dbh->do(q{
 #
 get '/' => sub {
 	my $c = shift;
-	$c->render(text => 'Please visit our site -> <b><a href=https://github.com/DUKSUNG/livepoll/>https://github.com/DUKSUNG/livepoll/</a></b>');
+	$c->render(text => '<a href=/livepoll/respondent><b>설문 시작하기</b></a>');
 	closer();
 };
 
@@ -809,9 +809,8 @@ get '/livepoll/respondent' => sub {
 	my $sth = $dbh->prepare("SELECT info_id, item_id FROM livepoll_state");
 	$sth->execute();
 	my ($info_id, $item_id) = $sth->fetchrow_array;
-	if ( not $info_id or not $item_id ) {
-		die "please check 'SELECT info_id, item_id FROM livepoll_state'";
-	}
+	$info_id = 1 unless $info_id;
+	$item_id = 1 unless $item_id;
 
 	my $content = "";
 	# 필요한 정보
@@ -999,6 +998,7 @@ get '/livepoll/save_state' => sub {
 		#
 		# COMMENT
 		#
+		$dbh->do("DELETE FROM livepoll_item_comment WHERE item_id=$item_id");
 		foreach my $msg ( keys %{ $response->{$info_id}->{$item_id}->{comment} } ) {
 			my $msg = $dbh->quote($msg);
 			$dbh->do("INSERT INTO livepoll_item_comment(item_id, comment) VALUES ($item_id, $msg)");
