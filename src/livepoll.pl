@@ -104,7 +104,8 @@ $dbh->do(q{
 #
 get '/' => sub {
 	my $c = shift;
-	$c->render(text => '<a href=/livepoll/respondent><b>설문 시작하기</b></a>');
+	$c->render(text => '<a href=/livepoll/synctest><b>동기화 테스트</b></a>');
+	#$c->render(text => '<a href=/livepoll/respondent><b>설문 시작하기</b></a>');
 	closer();
 };
 
@@ -1184,7 +1185,7 @@ __DATA__
 
 <script type="text/javascript">
 $(function () {
-	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/synctest');
+	var ws = new WebSocket('ws://203.252.219.164:3000/livepoll/websocket/synctest');
 
 	ws.onopen = function () {
 		document.getElementById("status").innerHTML = "Connection Opened!";
@@ -1227,7 +1228,7 @@ $(function () {
 <script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
 <script type="text/javascript">
 
-	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
+	var ws = new WebSocket('ws://203.252.219.164:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
 
 $(function () {
 	ws.onopen = function () {
@@ -1329,7 +1330,7 @@ $(function () {
 <script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
 <script type="text/javascript">
 
-	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
+	var ws = new WebSocket('ws://203.252.219.164:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
 
 $(function () {
 	ws.onopen = function () {
