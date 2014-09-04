@@ -20,6 +20,7 @@ my $path_tmp = './';
 my $fn_db    = ".$progname.db";
 my $clients  = {};
 my $synctest  = {};
+my $response  = {};
 my $counter  = 0;
 
 #
@@ -36,6 +37,13 @@ $dbh->do("PRAGMA cache_size = 80000") or die DBI::errstr; # 80MB for DB cache.
 $dbh->{sqlite_unicode} = 1; 
 
 # INIT Table
+$dbh->do(q{
+	CREATE TABLE IF NOT EXISTS livepoll_state (
+		info_id INTEGER NOT NULL,
+		item_id INTEGER NOT NULL
+	)
+}) or die DBI::errstr;
+
 $dbh->do(q{
 	CREATE TABLE IF NOT EXISTS livepoll_info (
 		livepoll_info_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,8 +133,8 @@ get '/livepoll/admin/poll/list' => sub {
 	my $stmt_select = q{SELECT livepoll_info_id, description, regdate FROM livepoll_info order by livepoll_info_id};
 	my $sth = $dbh->prepare($stmt_select);
 	$sth->execute();
-	while ( my ($id, $desc, $date) = $sth->fetchrow_array ) {
-		$content .= "<small>$date</small> <small><a href='/livepoll/admin/poll/edit?info_id=$id'>수정</a>, <a href='/livepoll/admin/poll/rm?info_id=$id'>삭제</a></small> <a href='/livepoll/admin/poll/view?info_id=$id'>$desc</a> <br>";
+	while ( my ($info_id, $desc, $date) = $sth->fetchrow_array ) {
+		$content .= "<small>$date</small> <small><a href='/livepoll/admin/poll/edit?info_id=$info_id'>수정</a>, <a href='/livepoll/admin/poll/rm?info_id=$info_id'>삭제</a></small> <a href='/livepoll/admin/poll/view?info_id=$info_id'>$desc</a> [<a href=/livepoll/screen?info_id=$info_id>SCREEN</a>]<br>";
 	}
 	$c->render('admin.poll.list', header => header(), footer => footer(), title => $title, content => $content);
 
@@ -713,26 +721,301 @@ websocket '/livepoll/websocket/synctest' => sub {
 		});
 
 };
+
 #
-# 설문자 영역
+# 동기 그래프
+#
+websocket '/livepoll/websocket/respondent' => sub {
+	my $self = shift;
+
+	# 타임아웃 설정하지 않음.
+	$self->inactivity_timeout(0);
+
+	my $info_id = $self->param("info_id") || 1;
+	my $item_id = $self->param("item_id") || 1;
+
+	# $self->tx == HASHREF;
+	my $id = sprintf("%s", $self->tx);
+	$clients->{$id} = $self->tx;
+
+	if ( !$response->{$info_id}->{$item_id}->{graph} ) {
+		my $sth;
+		#
+		# SELECT
+		#
+		$sth = $dbh->prepare("SELECT sequence, count FROM livepoll_item_select WHERE item_id=$item_id ORDER BY sequence");
+		$sth->execute();
+		while ( my ($seq, $count) = $sth->fetchrow_array ) {
+			$response->{$info_id}->{$item_id}->{graph}->{select}->{$seq} = $count;
+		}
+
+		#
+		# CHECK
+		#
+		$sth = $dbh->prepare("SELECT sequence, count FROM livepoll_item_check WHERE item_id=$item_id ORDER BY sequence");
+		$sth->execute();
+		while ( my ($seq, $count) = $sth->fetchrow_array ) {
+			$response->{$info_id}->{$item_id}->{graph}->{select}->{$seq} = $count;
+		}
+
+		#
+		# COMMENT
+		#
+		$sth = $dbh->prepare("SELECT livepoll_comment_id, comment FROM livepoll_item_comment WHERE item_id=$item_id");
+		$sth->execute();
+		while ( my ($comment_id, $comment) = $sth->fetchrow_array ) {
+			$response->{$info_id}->{$item_id}->{comment}->{$comment} = 1;
+		}
+	}
+
+	app->log->debug('RESPONDENT: CONNECTED: ' . keys %{ $clients });
+	$response->{$info_id}->{$item_id}->{total} = keys %{ $clients };
+	$clients->{$id}->send( { json => $response->{$info_id}->{$item_id} });
+
+	$self->on(message => sub {
+			my ( $self, $msg ) = @_;
+
+			my ($oper, $sequence);
+
+			if ( $msg =~ /^([+-])(\d)_(.+)$/ ) {
+				$response->{$info_id}->{$item_id}->{graph}->{$3}->{$2} += $1."1";
+				$response->{$info_id}->{$item_id}->{graph}->{$3}->{$2} = 0 if $response->{$info_id}->{$item_id}->{graph}->{$3}->{$2} < 0;
+			} else {
+				$response->{$info_id}->{$item_id}->{comment}->{$msg} = 1 if $msg;
+			}
+
+			for (keys %$clients) {
+				$clients->{$_}->send({json => $response->{$info_id}->{$item_id}});
+			}
+		});
+
+	$self->on(finish => sub {
+			delete $clients->{$id};
+			$response->{$info_id}->{$item_id}->{total} = keys %{ $clients };
+			app->log->debug('RESPONDENT: DISCONNECTED: ' . keys %{ $clients });
+			foreach my $key ( %{ $clients } ) {
+				$clients->{$key}->send( { json => $response->{$info_id}->{$item_id} });
+			}
+		});
+};
+
+#
+# 응답화면 영역
 #
 get '/livepoll/respondent' => sub {
 	my $c = shift;
-	my $title = "$progname - 응답자 선택 화면";
-	$c->render('respondent', header => header(), footer => footer(), title => $title);
+
+	# 진행 상태 정보 가져오기
+	my $sth = $dbh->prepare("SELECT info_id, item_id FROM livepoll_state");
+	$sth->execute();
+	my ($info_id, $item_id) = $sth->fetchrow_array;
+	if ( not $info_id or not $item_id ) {
+		die "please check 'SELECT info_id, item_id FROM livepoll_state'";
+	}
+
+	my $content = "";
+	# 필요한 정보
+	# prev item_id
+	# next item_id
+	# item subject
+	# 	select subject, count
+	# 	check subject, count
+	# comment
+	my $sth;
+	my $sequence;
+	my $subject;
+	my $allowcomment;
+	my $item_id_prev;
+	my $item_id_next;
+	my $item_subject;
+	my $tmp;
+
+	$sth = $dbh->prepare("SELECT allowcomment, sequence FROM livepoll_item WHERE livepoll_item_id = $item_id");
+	$sth->execute();
+	($allowcomment, $sequence) = $sth->fetchrow_array or die "Can't find sequence from item_id($item_id), info_id($info_id)";
+
+	$sth = $dbh->prepare("SELECT livepoll_item_id, MAX(sequence) FROM livepoll_item WHERE sequence < $sequence AND info_id=$info_id");
+	$sth->execute();
+	($item_id_prev) = $sth->fetchrow_array;
+	$item_id_prev = $item_id unless $item_id_prev;
+
+	$sth = $dbh->prepare("SELECT livepoll_item_id, MIN(sequence) FROM livepoll_item WHERE sequence > $sequence AND info_id=$info_id");
+	$sth->execute();
+	($item_id_next, $tmp) = $sth->fetchrow_array;
+	$item_id_next = $item_id unless $item_id_next;
+
+	$sth = $dbh->prepare("SELECT subject FROM livepoll_item WHERE livepoll_item_id = $item_id");
+	$sth->execute();
+	($subject) = $sth->fetchrow_array or die "Can't find sequence from item_id($item_id), info_id($info_id)";
+
+	#
+	# SELECT
+	#
+	$sth = $dbh->prepare("SELECT livepoll_item_select_id, sequence, subject, count FROM livepoll_item_select WHERE item_id=$item_id ORDER BY sequence");
+	$sth->execute();
+	while ( my ($select_id, $seq, $subject, $count) = $sth->fetchrow_array ) {
+		$content .= "$seq) $subject</br><span id=input_$seq><input type=button value='선택' onclick='choice(\"select\", $seq)'></span> <span id='graph_$seq' style='background-color: red; padding-right: ${count}0'>&nbsp;</span> <span id=count_$seq>$count</span></p>";
+	}
+
+	#
+	# CHECK
+	#
+	$sth = $dbh->prepare("SELECT livepoll_item_check_id, sequence, subject, count FROM livepoll_item_check WHERE item_id=$item_id ORDER BY sequence");
+	$sth->execute();
+	while ( my ($check_id, $seq, $subject, $count) = $sth->fetchrow_array ) {
+		$content .= "$seq) $subject</br><span id=input_$seq><input id=input_$seq type=button value='선택' onclick='choice(\"check\", $seq)'></span> <span id='graph_$seq' style='background-color: red; padding-right: ${count}0'>&nbsp;</span> <span id=count_$seq>$count</span></p>";
+	}
+
+	#
+	# COMMENT
+	#
+	if ( $allowcomment ) {
+		$content .= "기타) <input type=text id=msg></p><span id='comment'></span><br>";
+		#$sth = $dbh->prepare("SELECT livepoll_comment_id, comment FROM livepoll_item_comment WHERE item_id=$item_id");
+		#$sth->execute();
+		#while ( my ($comment_id, $comment) = $sth->fetchrow_array ) {
+		#	#$content .= "기타) <input type=text id=msg></p><span id='comment'></span><br>";
+		#}
+	}
+
+	$content .= '<p>';
+
+	$c->render('respondent', header => header(), footer => footer(), subject => $subject, content => $content, info_id => $info_id, item_id => $item_id, item_id_prev => $item_id_prev, item_id_next => $item_id_next, sequence => $sequence);
 	closer();
 };
 
 #
-# 집계화면 영역
+# 메인스크린 영역
 #
 get '/livepoll/screen' => sub {
 	my $c = shift;
-	my $title = "$progname - 집계 화면";
-	$c->render('screen', header => header(), footer => footer(), title => $title);
+	my $info_id = $c->param("info_id") || die "need a info_id";
+	my $item_id = $c->param("item_id");
+
+	# item_id가 없으면 진행 상태 정보 가져오기
+	unless ( $item_id ) {
+		my $sth = $dbh->prepare("SELECT item_id FROM livepoll_state WHERE info_id=$info_id");
+		$sth->execute();
+		($item_id) = $sth->fetchrow_array;
+
+		$item_id = 1 if not $item_id;
+	}
+
+	my $content = "";
+	# 필요한 정보
+	# prev item_id
+	# next item_id
+	# item subject
+	# 	select subject, count
+	# 	check subject, count
+	# comment
+	my $sth;
+	my $sequence;
+	my $subject;
+	my $allowcomment;
+	my $item_id_prev;
+	my $item_id_next;
+	my $item_subject;
+	my $tmp;
+
+	$sth = $dbh->prepare("SELECT allowcomment, sequence FROM livepoll_item WHERE livepoll_item_id = $item_id");
+	$sth->execute();
+	($allowcomment, $sequence) = $sth->fetchrow_array or die "Can't find sequence from item_id($item_id), info_id($info_id)";
+
+	$sth = $dbh->prepare("SELECT livepoll_item_id, MAX(sequence) FROM livepoll_item WHERE sequence < $sequence AND info_id=$info_id");
+	$sth->execute();
+	($item_id_prev) = $sth->fetchrow_array;
+	$item_id_prev = $item_id unless $item_id_prev;
+
+	$sth = $dbh->prepare("SELECT livepoll_item_id, MIN(sequence) FROM livepoll_item WHERE sequence > $sequence AND info_id=$info_id");
+	$sth->execute();
+	($item_id_next, $tmp) = $sth->fetchrow_array;
+	$item_id_next = $item_id unless $item_id_next;
+
+	$sth = $dbh->prepare("SELECT subject FROM livepoll_item WHERE livepoll_item_id = $item_id");
+	$sth->execute();
+	($subject) = $sth->fetchrow_array or die "Can't find sequence from item_id($item_id), info_id($info_id)";
+
+	#
+	# SELECT
+	#
+	$sth = $dbh->prepare("SELECT livepoll_item_select_id, sequence, subject, count FROM livepoll_item_select WHERE item_id=$item_id ORDER BY sequence");
+	$sth->execute();
+	while ( my ($select_id, $seq, $subject, $count) = $sth->fetchrow_array ) {
+		$content .= "$seq) $subject</br><span id='graph_$seq' style='background-color: red; padding-right: ${count}0'>&nbsp;</span> <span id=count_$seq>$count</span></p>";
+	}
+
+	#
+	# CHECK
+	#
+	$sth = $dbh->prepare("SELECT livepoll_item_check_id, sequence, subject, count FROM livepoll_item_check WHERE item_id=$item_id ORDER BY sequence");
+	$sth->execute();
+	while ( my ($check_id, $seq, $subject, $count) = $sth->fetchrow_array ) {
+		$content .= "$seq) $subject</br><span id='graph_$seq' style='background-color: red; padding-right: ${count}0'>&nbsp;</span> <span id=count_$seq>$count</span></p>";
+	}
+
+	#
+	# COMMENT
+	#
+	if ( $allowcomment ) {
+		$content .= "기타) <input type=text id=msg></p><span id='comment'></span><br>";
+		#$sth = $dbh->prepare("SELECT livepoll_comment_id, comment FROM livepoll_item_comment WHERE item_id=$item_id");
+		#$sth->execute();
+		#while ( my ($comment_id, $comment) = $sth->fetchrow_array ) {
+		#	#$content .= "기타) <input type=text id=msg></p><span id='comment'></span><br>";
+		#}
+	}
+
+	$content .= '<p>';
+
+	$c->render('screen', header => header(), footer => footer(), subject => $subject, content => $content, info_id => $info_id, item_id => $item_id, item_id_prev => $item_id_prev, item_id_next => $item_id_next, sequence => $sequence);
+	closer();
+};
+
+get '/livepoll/save_state' => sub {
+	my $c = shift;
+	my $info_id = $c->param("info_id") || die "need a info_id";
+	my $item_id = $c->param("item_id") || die "need a item_id";
+	my $item_id_next = $c->param("item_id_next") || die "need a item_id";
+
+	my $sth;
+
+	if ( $response->{$info_id}->{$item_id} ) {
+		#
+		# SELECT
+		#
+		foreach my $seq ( keys %{ $response->{$info_id}->{$item_id}->{graph}->{select} } ) {
+			my $count = $response->{$info_id}->{$item_id}->{graph}->{select}->{$seq};
+			$dbh->do("UPDATE livepoll_item_select SET count=$count WHERE item_id=$item_id AND sequence=$seq");
+		}
+
+		#
+		# CHECK
+		#
+		foreach my $seq ( keys %{ $response->{$info_id}->{$item_id}->{graph}->{check} } ) {
+			my $count = $response->{$info_id}->{$item_id}->{graph}->{check}->{$seq};
+			$dbh->do("UPDATE livepoll_item_check SET count=$count WHERE item_id=$item_id AND sequence=$seq");
+		}
+
+		#
+		# COMMENT
+		#
+		foreach my $msg ( keys %{ $response->{$info_id}->{$item_id}->{comment} } ) {
+			my $msg = $dbh->quote($msg);
+			$dbh->do("INSERT INTO livepoll_item_comment(item_id, comment) VALUES ($item_id, $msg)");
+		}
+	}
+
+	$dbh->do("DELETE FROM livepoll_state");
+	$dbh->do("INSERT INTO livepoll_state (info_id, item_id) VALUES ( $info_id, $item_id_next )");
+
+	$c->render(text => "<html> <meta http-equiv='refresh' content='0; url=/livepoll/screen?info_id=$info_id&item_id=$item_id_next'></meta> </html>");
 };
 
 app->start;
+
+
+
 
 sub closer {
 	$counter++;
@@ -902,7 +1185,7 @@ __DATA__
 
 <script type="text/javascript">
 $(function () {
-	var ws = new WebSocket('ws://203.252.219.164:3000/livepoll/websocket/synctest');
+	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/synctest');
 
 	ws.onopen = function () {
 		document.getElementById("status").innerHTML = "Connection Opened!";
@@ -939,9 +1222,171 @@ $(function () {
 
 <%== $footer %>
 
-
 @@ respondent.html.ep
-<%= $title %>
+<%== $header %>
+<span id=status>Can't connect websocket!</span>
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+<script type="text/javascript">
+
+	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
+
+$(function () {
+	ws.onopen = function () {
+		document.getElementById("status").innerHTML = "Connected Websocket!";
+		ws.send("");
+	};
+
+	ws.onmessage = function (msg) {
+		var res = JSON.parse(msg.data);
+
+		document.getElementById("status").innerHTML = "접속자 수: " + res["total"];
+
+		// graph
+		if ( res["graph"]["select"] ) {
+			for ( var id in res["graph"]["select"] ) {
+				var graphid = "graph_" + id;
+				var countid = "count_" + id;
+				document.getElementById(graphid).style.paddingRight = res["graph"]["select"][id] * 10;
+				document.getElementById(countid).innerHTML = res["graph"]["select"][id];
+			}
+		} else {
+			for ( var id in res["graph"]["check"] ) {
+				var graphid = "graph_" + id;
+				var countid = "count_" + id;
+				document.getElementById(graphid).style.paddingRight = res["graph"]["check"][id] * 10;
+				document.getElementById(countid).innerHTML = res["graph"]["check"][id];
+			}
+
+		}
+
+		// comment
+		$('#comment').html('');
+		for ( var message in res["comment"] ) {
+			$('#comment').append('<div>- ' + message + '</div>');
+		}
+
+	};
+
+	$('#msg').keydown(function (e) {
+		if ( $('#msg').val() ) {
+			if (e.keyCode == 13) {
+				ws.send($('#msg').val());
+				$('#msg').val('');
+			}
+		}
+	});
+
+});
+
+	function choice(type, graphid) {
+		var i;
+		for ( i = 0; i < 50; i++ ) {
+			if ( i == graphid ) {
+				var spanid = "#" + "input_" + graphid;
+				$(spanid).html("<input type=button value='취소' onclick='cancel(" + '"' + type + '", ' + graphid+")'>");
+			} else {
+				var spanid = "#" + "input_" + i;
+				if ( $(spanid) ) { 
+					$(spanid).html("<input type=button value='취소' onclick='cancel(" + '"' + type + '", ' + graphid+")'>");
+				}
+			}
+		}
+
+		ws.send("+" + graphid + "_" + type);
+	}
+
+
+	function cancel(type, graphid) {
+		var i;
+		for ( i = 0; i < 50; i++ ) {
+			if ( i == graphid ) {
+				var spanid = "#" + "input_" + graphid;
+				$(spanid).html("<input type=button value='선택' onclick='choice(" + '"' + type + '", ' + graphid+")'>");
+			} else {
+				var spanid = "#" + "input_" + i;
+				if ( $(spanid) ) { 
+					$(spanid).html("<input type=button value='선택' onclick='choice(" + '"' + type + '", ' + i +")'>");
+				}
+			}
+		}
+
+		ws.send("-" + graphid + "_" + type);
+	}
+
+</script>
+<h1><%= $subject %></h1>
+<%== $content %>
+
+<script type="text/javascript">
+</script>
+
+<%== $footer %>
 
 @@ screen.html.ep
-<%= $title %>
+<%== $header %>
+<a href=/livepoll/save_state?info_id=<%= $info_id %>&item_id=<%= $item_id %>&item_id_next=<%= $item_id_prev %>>prev</a>, 
+<a href=/livepoll/save_state?info_id=<%= $info_id %>&item_id=<%= $item_id %>&item_id_next=<%= $item_id_next %>>next</a>, 
+ <span id=status>Can't connect websocket!</span>
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+<script type="text/javascript">
+
+	var ws = new WebSocket('ws://192.168.0.254:3000/livepoll/websocket/respondent?info_id=<%= $info_id %>&item_id=<%= $item_id %>');
+
+$(function () {
+	ws.onopen = function () {
+		document.getElementById("status").innerHTML = "Connected Websocket!";
+		ws.send("");
+	};
+
+	ws.onmessage = function (msg) {
+		var res = JSON.parse(msg.data);
+
+		document.getElementById("status").innerHTML = "접속자 수: " + res["total"];
+
+		// graph
+		if ( res["graph"]["select"] ) {
+			for ( var id in res["graph"]["select"] ) {
+				var graphid = "graph_" + id;
+				var countid = "count_" + id;
+				document.getElementById(graphid).style.paddingRight = res["graph"]["select"][id] * 10;
+				document.getElementById(countid).innerHTML = res["graph"]["select"][id];
+			}
+		} else {
+			for ( var id in res["graph"]["check"] ) {
+				var graphid = "graph_" + id;
+				var countid = "count_" + id;
+				document.getElementById(graphid).style.paddingRight = res["graph"]["check"][id] * 10;
+				document.getElementById(countid).innerHTML = res["graph"]["check"][id];
+			}
+
+		}
+
+		// comment
+		$('#comment').html('');
+		for ( var message in res["comment"] ) {
+			$('#comment').append('<div>- ' + message + '</div>');
+		}
+
+	};
+
+	$('#msg').keydown(function (e) {
+		if ( $('#msg').val() ) {
+			if (e.keyCode == 13) {
+				ws.send($('#msg').val());
+				$('#msg').val('');
+			}
+		}
+	});
+
+});
+
+</script>
+<h1><%= $subject %></h1>
+<%== $content %>
+
+<script type="text/javascript">
+</script>
+
+<%== $footer %>
+
+
