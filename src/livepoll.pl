@@ -821,7 +821,6 @@ get '/livepoll/respondent' => sub {
 	# 	select subject, count
 	# 	check subject, count
 	# comment
-	my $sth;
 	my $sequence;
 	my $subject;
 	my $allowcomment;
